@@ -155,8 +155,15 @@
       '.dshm-panel[data-embedded="true"]{position:relative;inset:auto;width:100%;height:100%;min-width:0;max-width:none;z-index:auto;border:0;border-radius:0;box-shadow:none}',
       '.dshm-panel[data-embedded="true"] .dshm-resizer{display:none}',
       '.dshm-tab-panel{position:relative;inset:auto;width:100%;height:100%;min-width:0;max-width:none;z-index:auto;display:flex;flex-direction:column;overflow:hidden;border:0;border-radius:0;box-shadow:none;',
-      'background:var(--dsw-alias-bg-module-platform,#1f1f1f);color:var(--dsw-alias-label-primary,#f2f2f2);',
-      'font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;box-sizing:border-box}',
+      'background:var(--dsw-alias-bg-base,#1f1f1f);color:var(--dsw-alias-label-primary,#f2f2f2);',
+      'font-family:inherit;font-size:13px;line-height:1.5;box-sizing:border-box}',
+      '.dshm-tabTitle{display:inline-flex;align-items:center;gap:6px;min-width:0}',
+      '.dshm-tabTitleText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.dshm-meetingGlyph{display:inline-flex;align-items:center;justify-content:center;flex:none;width:14px;height:14px;color:var(--dsw-alias-label-secondary,#b9b9b9)}',
+      '.dshm-meetingGlyph svg{width:14px;height:14px;flex:none}',
+      '.dshm-meetingGlyph[data-listening="true"]{color:#51d88a;filter:drop-shadow(0 0 4px rgba(81,216,138,.85));animation:dshm-breathe 2.2s ease-in-out infinite}',
+      '.dshm-meetingGlyph[data-busy="true"]{color:#f0b45a}',
+      '.dshm-meetingGlyph[data-error="true"]{color:#ff8a8a}',
       'html.dsh-meeting-sidebar #root{margin-right:var(--dsh-meeting-width,540px)!important;transition:margin-right .22s ease}',
 
       '@media (max-width:900px){',
@@ -254,7 +261,7 @@
       '.dshm-body::-webkit-scrollbar{width:8px}.dshm-body::-webkit-scrollbar-thumb{background:rgba(128,128,128,.35);border-radius:8px}',
       '.dshm-section{padding:12px 14px}',
       '.dshm-card{border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:12px;padding:11px 12px;margin:0 0 10px;',
-      'background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#2b2b2b) 72%,transparent)}',
+      'background:var(--dsw-alias-bg-layer-1,#2b2b2b)}',
       '.dshm-cardTitle{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:650;margin:0 0 4px}',
       '.dshm-modelCard{border-top:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));padding:10px 0 2px;margin-top:8px}',
       '.dshm-modelHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}',
@@ -378,11 +385,11 @@
       'color:var(--dsw-alias-label-secondary,#c7c7c7);font:inherit;font-size:10.5px;padding:4px 8px;cursor:pointer}',
       '.dshm-chip:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}',
 
-      '.dshm-history{position:absolute;inset:0;z-index:5;background:var(--dsw-alias-bg-module-platform,#1f1f1f);display:flex;flex-direction:column}',
+      '.dshm-history{position:absolute;inset:0;z-index:5;background:var(--dsw-alias-bg-base,#1f1f1f);display:flex;flex-direction:column}',
       '.dshm-historyHead{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1))}',
       '.dshm-historyList{flex:1;overflow:auto;padding:8px 14px 14px}',
       '.dshm-historyItem{width:100%;text-align:left;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));border-radius:10px;',
-      'background:0 0;color:inherit;font:inherit;padding:8px 10px;margin-bottom:7px;cursor:pointer}',
+      'background:var(--dsw-alias-bg-layer-1,#2b2b2b);color:inherit;font:inherit;padding:8px 10px;margin-bottom:7px;cursor:pointer}',
       '.dshm-historyItem:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}',
       '.dshm-historyTitle{font-size:12px;font-weight:650;margin:0 0 2px}',
       '.dshm-historyMeta{font-size:10.5px;color:var(--dsw-alias-label-tertiary,#9a9a9a)}',
@@ -1074,6 +1081,24 @@
 
         function MeetingTabBody() {
           return h(PanelBoundary, { embedded: true }, h(MeetingPanel, { embedded: true }));
+        }
+
+        function MeetingTabTitle(props) {
+          var state = useStore();
+          var tab = props && typeof props.useTabInfo === 'function' ? props.useTabInfo().tab : null;
+          var title = tab && tab.title ? tab.title : '会议助手';
+          var listening = state.status === 'listening';
+          var busy = state.status === 'busy';
+          var failed = state.status === 'error';
+          return h('span', { className: 'dshm-tabTitle' },
+            h('span', {
+              className: 'dshm-meetingGlyph',
+              'data-listening': listening ? 'true' : 'false',
+              'data-busy': busy ? 'true' : 'false',
+              'data-error': failed ? 'true' : 'false'
+            }, h(WaveIcon, null)),
+            h('span', { className: 'dshm-tabTitleText' }, title)
+          );
         }
 
         function MeetingOverlay() {
@@ -3194,6 +3219,14 @@
                         name: 'sidebar.right.pane.tab',
                         key: PLUGIN_ID
                       }, MeetingTabBody);
+                    });
+                  });
+                  scope.effect(function () {
+                    return scope.slots.inject('sidebar.right.pane.tab.title', function () {
+                      return scope.slots.register({
+                        name: 'sidebar.right.pane.tab.title',
+                        key: PLUGIN_ID
+                      }, MeetingTabTitle);
                     });
                   });
                   scope.effect(function () {
