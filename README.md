@@ -24,6 +24,10 @@ already configured in DSH.
   files also go to the DSH speech cache).
 - **New / history meeting** buttons in the panel header: New returns to the setup
   flow; History opens the saved meetings and loads one into the panel.
+- The header button opens the panel as a tab in DSH's official right sidebar
+  (`ctx.sidebarRightTabs` + `ctx.sidebarRight`), so resizing, splitting,
+  fullscreen and per-Session persistence are handled by DSH. Older DSH builds
+  without those extension services fall back to the built-in floating panel.
 - Meeting agenda upload/paste/drag-and-drop (`txt`, `md`, `csv`, `json`), Office
   documents (`PDF`, `Word`, `PPT`, `Excel`, ODF), and images (`png`, `jpg`,
   `webp`, `bmp`): Word/PPT/ODF text is read directly; PDF, legacy Office and

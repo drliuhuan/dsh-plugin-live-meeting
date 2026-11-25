@@ -1,11 +1,10 @@
 // dsh-plugin-live-meeting — Web client half.
 //
 // Loaded as a classic script through DSH's module loader, so React comes from
-// the loader's `require` and nothing is imported at module scope.  Adds a
-// Session-header toggle and one portaled right-sidebar panel.
-// The panel is mounted from the header component and portaled to document.body,
-// so the shell frame's overflow/containing block cannot clip it when the app is
-// shifted left to make room for the sidebar.
+// the loader's `require` and nothing is imported at module scope.
+// The header toggle opens an official right-sidebar tab through
+// `sidebarRightTabs` / `sidebarRight`; older DSH builds fall back to the
+// in-page portaled panel below.
 // The panel is a projection of the Host snapshot plus SSE deltas; all audio,
 // ASR and model work stays in the Host.
 
@@ -103,6 +102,8 @@
 
   var store = { open: false, tab: 'transcript', status: 'idle' };
   var storeListeners = new Set();
+  var officialSidebar = null;
+  var officialFallback = false;
 
   function setStore(patch) {
     store = Object.assign({}, store, typeof patch === 'function' ? patch(store) : patch);
@@ -147,6 +148,8 @@
       'flex-direction:column;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-right:0;border-top:0;border-bottom:0;',
       'border-radius:0;overflow:hidden;background:var(--dsw-alias-bg-module-platform,#1f1f1f);color:var(--dsw-alias-label-primary,#f2f2f2);',
       'box-shadow:-18px 0 48px rgba(0,0,0,.28);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}',
+      '.dshm-panel[data-embedded="true"]{position:relative;inset:auto;width:100%;height:100%;min-width:0;max-width:none;z-index:auto;border:0;border-radius:0;box-shadow:none}',
+      '.dshm-panel[data-embedded="true"] .dshm-resizer{display:none}',
       'html.dsh-meeting-sidebar #root{margin-right:var(--dsh-meeting-width,540px)!important;transition:margin-right .22s ease}',
 
       '@media (max-width:900px){',
@@ -1020,7 +1023,7 @@
           React.useEffect(function () {
             if (typeof document === 'undefined') return;
             var root = document.documentElement;
-            if (state.open) root.classList.add('dsh-meeting-sidebar');
+            if (!officialSidebar && state.open) root.classList.add('dsh-meeting-sidebar');
             else root.classList.remove('dsh-meeting-sidebar');
             return function () { root.classList.remove('dsh-meeting-sidebar'); };
           }, [state.open]);
@@ -1031,18 +1034,28 @@
           var button = h('button', {
             type: 'button',
             className: 'dshm-toggle',
-            'data-active': state.open ? 'true' : 'false',
+            'data-active': !officialSidebar && state.open ? 'true' : 'false',
             'data-listening': listening ? 'true' : 'false',
             'data-busy': busy ? 'true' : 'false',
             'data-error': failed ? 'true' : 'false',
-            title: listening ? '会议助手正在听会（点击查看）' : '会议助手：实时转写、校正、翻译、纪要与提问',
+            title: listening ? '会议助手正在听会（点击打开右侧栏）' : '会议助手：实时转写、校正、翻译、纪要与提问',
             'aria-label': listening ? '会议助手正在听会' : '打开会议助手',
             onClick: function () {
+              if (officialSidebar && typeof officialSidebar.openTab === 'function') {
+                try {
+                  officialSidebar.openTab('live-meeting');
+                  return;
+                } catch (error) {
+                  // Fall through to the in-page panel if the official sidebar
+                  // has no mounted Session yet.
+                  officialFallback = true;
+                }
+              }
               setStore(function (current) { return { open: !current.open }; });
             }
           }, h(WaveIcon, null), h('span', { className: 'dshm-toggle-label' }, listening ? '听会中' : '会议助手'));
 
-          if (!state.open) return button;
+          if ((officialSidebar && !officialFallback) || !state.open) return button;
           var panel = h(PanelBoundary, null, h(MeetingPanel, null));
           // Always mount the panel at the viewport level.  The header seat is
           // guaranteed to exist (the user clicked this button); the overlay
@@ -1051,6 +1064,10 @@
             return h(React.Fragment, null, button, ReactDOM.createPortal(panel, document.body));
           }
           return h(React.Fragment, null, button, panel);
+        }
+
+        function MeetingTabBody() {
+          return h(PanelBoundary, { embedded: true }, h(MeetingPanel, { embedded: true }));
         }
 
         function MeetingOverlay() {
@@ -1098,7 +1115,8 @@
 
           render() {
             if (this.state.error) {
-              return h('div', { className: 'dshm-panel' },
+              var embedded = Boolean(this.props && this.props.embedded);
+              return h('div', { className: 'dshm-panel', 'data-embedded': embedded ? 'true' : 'false' },
                 h('div', { className: 'dshm-head' },
                   h('div', { className: 'dshm-titleRow' },
                     h('span', { className: 'dshm-dot', 'data-tone': 'error' }),
@@ -1107,7 +1125,7 @@
                       h('div', { className: 'dshm-sub' }, '请刷新页面；错误已记录到 Host 诊断')
                     ),
                     h('div', { className: 'dshm-headActions' },
-                      h('button', { type: 'button', className: 'dshm-iconBtn', onClick: function () { setStore({ open: false }); } }, '✕')
+                      embedded ? null : h('button', { type: 'button', className: 'dshm-iconBtn', onClick: function () { setStore({ open: false }); } }, '✕')
                     )
                   )
                 ),
@@ -1120,8 +1138,9 @@
           }
         }
 
-        function MeetingPanel() {
+        function MeetingPanel(props) {
           insertStyle();
+          var embedded = Boolean(props && props.embedded);
           var [snapshot, setSnapshot] = React.useState(null);
           var [loadError, setLoadError] = React.useState(null);
           var [connection, setConnection] = React.useState('connecting');
@@ -2235,15 +2254,16 @@
 
           return h('div', {
             className: 'dshm-panel',
-            role: 'dialog',
+            role: embedded ? undefined : 'dialog',
             'aria-label': '会议助手',
+            'data-embedded': embedded ? 'true' : 'false',
             'data-drag': dragOver ? 'true' : 'false',
             onDragOver: onPanelDragOver,
             onDragEnter: onPanelDragEnter,
             onDragLeave: onPanelDragLeave,
             onDrop: onPanelDrop
           },
-            h('div', { className: 'dshm-resizer', title: '拖动调整宽度', onPointerDown: onResizeStart }),
+            embedded ? null : h('div', { className: 'dshm-resizer', title: '拖动调整宽度', onPointerDown: onResizeStart }),
             dragOver
               ? h('div', { className: 'dshm-dropOverlay' }, '松开以载入日程文件（或点「上传 / 拖入日程」）')
               : null,
@@ -2261,7 +2281,7 @@
                     title: '历史会议',
                     onClick: function () { setHistoryOpen(!historyOpen); }
                   }, '历史会议'),
-                  h('button', {
+                  embedded ? null : h('button', {
                     type: 'button', className: 'dshm-iconBtn', title: '关闭',
                     onClick: function () { setStore({ open: false }); }
                   }, '✕')
@@ -3122,6 +3142,59 @@
             });
           } catch (error) {
             // the header seat may not exist on an older Host
+          }
+
+          // Official right-sidebar tab.  `ctx.inject` waits for the optional
+          // sidebar services so older DSH builds keep the in-page fallback.
+          try {
+            if (typeof ctx.inject === 'function') {
+              ctx.inject(['sidebarRightTabs', 'sidebarRight'], function (scope) {
+                if (officialSidebar === scope.sidebarRight) return;
+                officialSidebar = scope.sidebarRight;
+                setStore({ open: false });
+                if (typeof document !== 'undefined') {
+                  document.documentElement.classList.remove('dsh-meeting-sidebar');
+                }
+                try {
+                  scope.effect(function () {
+                    return scope.sidebarRightTabs.register({
+                      id: PLUGIN_ID,
+                      kind: 'live-meeting',
+                      title: function () { return '会议助手'; }
+                    });
+                  });
+                  scope.effect(function () {
+                    return scope.slots.inject('sidebar.right.pane.tab', function () {
+                      return scope.slots.register({
+                        name: 'sidebar.right.pane.tab',
+                        key: PLUGIN_ID
+                      }, MeetingTabBody);
+                    });
+                  });
+                  scope.effect(function () {
+                    return function () {
+                      if (officialSidebar === scope.sidebarRight) officialSidebar = null;
+                    };
+                  });
+                } catch (error) {
+                  officialFallback = true;
+                  try {
+                    fetch('/dsh-meeting/client-error', {
+                      method: 'POST',
+                      headers: { 'content-type': 'application/json' },
+                      body: JSON.stringify({
+                        message: '官方右侧栏注册失败：' + String(error && error.message || error),
+                        stack: String(error && error.stack || '')
+                      })
+                    });
+                  } catch (ignored) {
+                    // diagnostics only
+                  }
+                }
+              });
+            }
+          } catch (error) {
+            // keep the fallback panel when the official sidebar is absent
           }
         }
 
