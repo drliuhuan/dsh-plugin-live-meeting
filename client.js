@@ -23,6 +23,9 @@
     profile: '/dsh-meeting/profile',
     script: '/dsh-meeting/script',
     prepare: '/dsh-meeting/prepare',
+    models: '/dsh-meeting/models',
+    modelDownload: '/dsh-meeting/models/download',
+    modelImport: '/dsh-meeting/models/import',
     devices: '/dsh-meeting/devices',
     history: '/dsh-meeting/history',
     load: '/dsh-meeting/load',
@@ -243,6 +246,13 @@
       '.dshm-card{border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));border-radius:12px;padding:11px 12px;margin:0 0 10px;',
       'background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#2b2b2b) 72%,transparent)}',
       '.dshm-cardTitle{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:650;margin:0 0 4px}',
+      '.dshm-modelCard{border-top:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));padding:10px 0 2px;margin-top:8px}',
+      '.dshm-modelHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}',
+      '.dshm-modelTitle{font-size:12.5px;font-weight:650;margin-bottom:1px}',
+      '.dshm-modelPath{font-size:10.5px;color:var(--dsw-alias-label-tertiary,#9a9a9a);margin:5px 0 7px;word-break:break-all;line-height:1.45}',
+      '.dshm-modelLinks{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11px}',
+      '.dshm-modelLink{color:var(--dsw-alias-label-link,#7aa7ff);text-decoration:none;white-space:nowrap}',
+      '.dshm-modelLink:hover{text-decoration:underline}',
       '.dshm-muted{color:var(--dsw-alias-label-tertiary,#9a9a9a);font-size:11.5px;line-height:1.55;margin:0}',
       '.dshm-note{color:var(--dsw-alias-label-secondary,#c7c7c7);font-size:11.5px;line-height:1.6}',
       '.dshm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px 10px}',
@@ -1121,6 +1131,10 @@
           var [historyOpen, setHistoryOpen] = React.useState(false);
           var [history, setHistory] = React.useState(null);
           var [historyBusy, setHistoryBusy] = React.useState(false);
+          var [models, setModels] = React.useState(null);
+          var [modelsBusy, setModelsBusy] = React.useState('');
+          var [modelPaths, setModelPaths] = React.useState({});
+          var [modelError, setModelError] = React.useState('');
           var [form, setForm] = React.useState(defaultForm({}));
           var [question, setQuestion] = React.useState('');
           var [now, setNow] = React.useState(Date.now());
@@ -1488,6 +1502,10 @@
             }
           }, [showSettings]);
 
+          React.useEffect(function () {
+            if (showSettings) loadModels();
+          }, [showSettings]);
+
           function onScroll() {
             if (!bodyRef.current) return;
             var node = bodyRef.current;
@@ -1551,8 +1569,65 @@
           function prepareModel() {
             api(API.prepare, {}).then(function () {
               notify('已开始准备本地语音模型，下载进度会显示在这里');
+              loadModels(true);
             }).catch(function (error) {
               notify('准备语音模型失败：' + error.message);
+            });
+          }
+
+          function loadModels(quiet) {
+            if (!quiet) setModelsBusy('load');
+            api(API.models).then(function (payload) {
+              setModels(payload);
+              setModelError('');
+            }).catch(function (error) {
+              if (!quiet) setModelError('读取模型状态失败：' + error.message);
+            }).then(function () {
+              if (!quiet) setModelsBusy('');
+            });
+          }
+
+          function downloadModel(id) {
+            setModelsBusy(id);
+            setModelError('');
+            api(API.modelDownload, { id: id }).then(function (payload) {
+              if (payload.models) setModels(payload.models);
+              notify(id === 'asr' ? '已开始下载 SenseVoice 模型' : '声纹模型已下载');
+              if (id === 'asr') {
+                // The provider downloads in its own task; refresh until it settles.
+                var attempts = 0;
+                var timer = setInterval(function () {
+                  attempts += 1;
+                  loadModels(true);
+                  if (attempts >= 30) clearInterval(timer);
+                }, 2000);
+              }
+            }).catch(function (error) {
+              setModelError((id === 'asr' ? '语音模型下载失败：' : '声纹模型下载失败：') + error.message
+                + '。可以点下方官方链接手动下载，再把文件路径填进输入框导入。');
+            }).then(function () {
+              setModelsBusy('');
+            });
+          }
+
+          function importModel(id) {
+            var source = String(modelPaths[id] || '').trim();
+            if (!source) {
+              notify(id === 'asr'
+                ? '请填写包含 model.int8.onnx、tokens.txt、silero_vad.onnx 的目录路径'
+                : '请填写下载后的 CAM++ 模型文件路径');
+              return;
+            }
+            setModelsBusy('import-' + id);
+            setModelError('');
+            api(API.modelImport, { id: id, path: source }).then(function (payload) {
+              if (payload.models) setModels(payload.models);
+              if (payload.warning) notify(payload.warning);
+              else notify(id === 'asr' ? '语音模型已导入并复制到插件目录' : '声纹模型已导入并复制到插件目录');
+            }).catch(function (error) {
+              setModelError('导入失败：' + error.message);
+            }).then(function () {
+              setModelsBusy('');
             });
           }
 
@@ -1601,6 +1676,11 @@
           }
 
           function startNewMeeting() {
+            if (isLive) {
+              notify('请先结束当前会议，再新建会议');
+              return;
+            }
+            setBusy('new');
             api(API.newMeeting, {}).then(function (payload) {
               if (payload.state) setSnapshot(payload.state);
               setRowsDirty(false);
@@ -1612,7 +1692,7 @@
               notify('已回到会议准备状态');
             }).catch(function (error) {
               notify('新会议失败：' + error.message);
-            });
+            }).then(function () { setBusy(''); });
           }
 
           function saveProfile() {
@@ -2106,6 +2186,7 @@
             // The settings panel is a tab now, not a modal overlay.
             setShowSettings(nextTab === 'settings');
             if (nextTab === 'settings' && devices.length === 0) refreshDevices();
+            if (nextTab === 'settings') loadModels();
           }
 
           var status = statusInfo(active, snapshot && snapshot.asr, busy);
@@ -2196,9 +2277,12 @@
                     type: 'button', className: 'dshm-btn', 'data-kind': 'primary', disabled: !canStart,
                     onClick: startMeeting
                   }, busy === 'start' ? h('span', null, h('span', { className: 'dshm-spinner' }), ' 开始中…') : '开始听会'),
-                active && (active.readOnly || active.status === 'ended')
-                  ? h('button', { type: 'button', className: 'dshm-btn', 'data-kind': 'ghost', onClick: startNewMeeting }, '新会议')
-                  : null,
+                h('button', {
+                  type: 'button', className: 'dshm-btn', 'data-kind': 'ghost',
+                  disabled: busy === 'new',
+                  title: isLive ? '请先结束当前会议' : '新建会议',
+                  onClick: startNewMeeting
+                }, busy === 'new' ? '新建中…' : '新建会议'),
                 h('span', { className: 'dshm-timer' }, startedAt ? formatClock(elapsed) : '')
               )
             ),
@@ -2404,6 +2488,100 @@
             );
           }
 
+          function renderModels() {
+            if (!models) {
+              return h('div', { className: 'dshm-card' },
+                h('div', { className: 'dshm-cardTitle' }, '本地模型管理'),
+                h('p', { className: 'dshm-muted' }, h('span', { className: 'dshm-spinner' }), ' 正在读取模型状态…')
+              );
+            }
+            function modelTone(entry) {
+              if (entry.ready) return { tone: 'good', text: '已就绪' };
+              var phase = entry.id === 'asr' && asr ? asr.phase : entry.phase;
+              if (['downloading', 'checking', 'loading', 'waking'].indexOf(phase) >= 0) return { tone: 'busy', text: '下载/准备中' };
+              if (phase === 'failed' || phase === 'error') return { tone: 'bad', text: '失败' };
+              return { tone: 'idle', text: '未下载' };
+            }
+            function downloadLinks(entry) {
+              var pages = entry.downloadPages || [entry.downloadPage];
+              return pages.map(function (page, index) {
+                return h('a', {
+                  key: page, className: 'dshm-modelLink', href: page, target: '_blank', rel: 'noreferrer'
+                }, index === 0
+                  ? (entry.id === 'asr' ? '模型下载页' : '官方下载页')
+                  : (entry.id === 'asr' ? 'VAD 下载页' : '镜像下载页'));
+              });
+            }
+            function renderModel(entry) {
+              var badge = modelTone(entry);
+              var busyNow = modelsBusy === entry.id;
+              var placeholder = entry.id === 'asr'
+                ? '下载后的目录，如 C:\\Users\\你\\Downloads\\sensevoice-onnx'
+                : '下载后的文件，如 C:\\Users\\你\\Downloads\\campplus_zh_16k.onnx';
+              var pathText = entry.id === 'asr'
+                ? (entry.paths && entry.paths.model) || ''
+                : (entry.paths && entry.paths.model) || '';
+              return h('div', { key: entry.id, className: 'dshm-modelCard' },
+                h('div', { className: 'dshm-modelHead' },
+                  h('div', null,
+                    h('div', { className: 'dshm-modelTitle' }, entry.name),
+                    h('div', { className: 'dshm-muted' }, entry.detail)
+                  ),
+                  h('span', { className: 'dshm-pill', 'data-tone': badge.tone }, badge.text)
+                ),
+                h('div', { className: 'dshm-modelPath', title: pathText }, pathText),
+                h('div', { className: 'dshm-row' },
+                  h('button', {
+                    type: 'button', className: 'dshm-btn', 'data-kind': 'primary',
+                    disabled: busyNow || modelsBusy !== '',
+                    onClick: function () { downloadModel(entry.id); }
+                  }, busyNow ? '处理中…' : (entry.ready ? '重新检查/准备' : '自动下载')),
+                  h('span', { className: 'dshm-modelLinks' }, downloadLinks(entry))
+                ),
+                entry.id === 'asr' && progress !== null
+                  ? h('div', null,
+                    h('div', { className: 'dshm-progress' }, h('i', { style: { width: progress + '%' } })),
+                    h('p', { className: 'dshm-muted' }, progress + '% · 首次使用约需 240MB')
+                  )
+                  : null,
+                h('p', { className: 'dshm-note', style: { marginTop: '8px' } },
+                  '自动下载失败时：点上面的官方下载页手动下载，再把本地路径填到下面。' +
+                  (entry.id === 'asr'
+                    ? '需要 model.int8.onnx、tokens.txt、silero_vad.onnx；可以填它们所在目录，导入时会自动复制到插件 models/asr 和 DSH 语音缓存。'
+                    : '选择 campplus_zh_16k.onnx 文件，导入时会自动复制到插件 models/speaker。')
+                ),
+                h('div', { className: 'dshm-row' },
+                  h('input', {
+                    className: 'dshm-input', style: { flex: 1 }, placeholder: placeholder,
+                    value: modelPaths[entry.id] || '',
+                    onChange: function (event) {
+                      var next = Object.assign({}, modelPaths);
+                      next[entry.id] = event.target.value;
+                      setModelPaths(next);
+                    }
+                  }),
+                  h('button', {
+                    type: 'button', className: 'dshm-btn', 'data-kind': 'ghost',
+                    disabled: modelsBusy === 'import-' + entry.id,
+                    onClick: function () { importModel(entry.id); }
+                  }, modelsBusy === 'import-' + entry.id ? '导入中…' : '导入并复制')
+                )
+              );
+            }
+            return h('div', { className: 'dshm-card' },
+              h('div', { className: 'dshm-cardTitle' }, '本地模型管理',
+                h('button', {
+                  type: 'button', className: 'dshm-btn', 'data-kind': 'ghost',
+                  disabled: modelsBusy === 'load', onClick: function () { loadModels(); }
+                }, '刷新')
+              ),
+              h('p', { className: 'dshm-note' }, '模型只在本机使用；自动下载失败时可以手动下载后指定本地文件，插件会校验并复制到插件目录。'),
+              modelError ? h('div', { className: 'dshm-error' }, modelError) : null,
+              (models.models || []).map(renderModel),
+              h('p', { className: 'dshm-muted', style: { marginTop: '8px' } }, '模型目录：' + models.modelsRoot)
+            );
+          }
+
           function renderSettings() {
             return h('div', { className: 'dshm-section' },
               h('div', { className: 'dshm-card' },
@@ -2593,24 +2771,7 @@
                   h('p', { className: 'dshm-muted' }, asr.message || '')
                 )
                 : null,
-              asr && asr.available
-                ? h('div', { className: 'dshm-card' },
-                  h('div', { className: 'dshm-cardTitle' }, '本地语音模型', h('span', { className: 'dshm-muted' }, asr.providerId || '')),
-                  h('p', { className: 'dshm-note' }, phaseText(asr)),
-                  progress !== null
-                    ? h('div', null,
-                      h('div', { className: 'dshm-progress' }, h('i', { style: { width: progress + '%' } })),
-                      h('p', { className: 'dshm-muted' }, progress + '% · 首次使用约需 240MB')
-                    )
-                    : null,
-                  ['unprepared', 'failed', 'cancelled'].indexOf(asr.phase) >= 0
-                    ? h('button', { type: 'button', className: 'dshm-btn', 'data-kind': 'primary', onClick: prepareModel }, '下载并准备模型')
-                    : null,
-                  ['checking', 'loading', 'waking', 'downloading'].indexOf(asr.phase) >= 0
-                    ? h('p', { className: 'dshm-muted' }, h('span', { className: 'dshm-spinner' }), ' 准备中…')
-                    : null
-                )
-                : null,
+              renderModels(),
               active && active.speakers && active.speakers.length > 0
                 ? h('div', { className: 'dshm-card' },
                   h('div', { className: 'dshm-cardTitle' }, '识别到的发言人'),

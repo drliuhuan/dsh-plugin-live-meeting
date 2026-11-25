@@ -30,8 +30,8 @@ repository.
 
 - Meeting transcripts, audio, summaries, screenshots or agenda files from
   `~/.dsh/meetings`.
-- Downloaded models (SenseVoice / CAM++), build outputs under `node_modules`,
-  local probe folders, logs or credentials.
+- Downloaded models (SenseVoice / CAM++), the `models/` directory, build outputs
+  under `node_modules`, local probe folders, logs or credentials.
 - Tokens, API keys, `.env` files, or machine-specific absolute paths that are
   not documented fallbacks.
 
@@ -44,6 +44,7 @@ repository.
 - `lib/meeting.mjs` — capture, ASR, correction, turns, refinement, minutes, Q&A.
 - `lib/agenda.mjs` — agenda parsing and current-item matching.
 - `lib/office.mjs` — PDF/Office text extraction and LibreOffice rendering.
+- `lib/models.mjs` — local model status, auto-download, manual import and copy.
 - `lib/native.mjs` — WASAPI capture, device enumeration, Windows OCR.
 - `native/` — C# capture helper and OCR PowerShell script.
 - `scripts/` — native build and pure local selftest.

@@ -17,6 +17,13 @@ already configured in DSH.
 - Domain-aware LLM correction (medical, technology, gaming, finance, legal,
   education, manufacturing, marketing, research, custom) using the meeting topic
   and an optional glossary.
+- **Local model manager** in settings for SenseVoice (about 240 MB) and CAM++
+  speaker embeddings (about 27 MB): status and paths, one-click auto-download,
+  official download links on failure, and a local-path import that verifies
+  SHA-256 and copies the files into the plugin's `models/` directory (the ASR
+  files also go to the DSH speech cache).
+- **New / history meeting** buttons in the panel header: New returns to the setup
+  flow; History opens the saved meetings and loads one into the panel.
 - Meeting agenda upload/paste/drag-and-drop (`txt`, `md`, `csv`, `json`), Office
   documents (`PDF`, `Word`, `PPT`, `Excel`, ODF), and images (`png`, `jpg`,
   `webp`, `bmp`): Word/PPT/ODF text is read directly; PDF, legacy Office and
@@ -114,8 +121,11 @@ dsh plugin --profile desktop add D:\path\to\dsh-plugin-live-meeting
 ```
 
 Then enable **Voice Input** and **Meeting Assistant** in DSH's plugin manager.
-Open the meeting assistant from the Session header, open settings, and click
-**Download and prepare model** (about 240 MB) the first time.
+Open the meeting assistant from the Session header, open settings, and use
+**Local model manager** to auto-download SenseVoice (about 240 MB) and, when
+speaker labels are enabled, CAM++ (about 27 MB). If auto-download fails, use the
+official links and import the local file/directory; the plugin verifies it and
+copies it into `models/`.
 
 See [README.zh.md](README.zh.md) for the full Chinese guide, architecture,
 privacy notes, and troubleshooting.
