@@ -124,9 +124,13 @@
   }
 
   function insertStyle() {
-    if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
-    var style = document.createElement('style');
-    style.id = STYLE_ID;
+    if (typeof document === 'undefined') return;
+    var style = document.getElementById(STYLE_ID);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = STYLE_ID;
+      document.head.appendChild(style);
+    }
     style.textContent = [
       '.dshm-toggle{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid transparent;',
       'border-radius:var(--dsw-radius-sm,6px);background:0 0;color:var(--dsw-alias-label-secondary,#b9b9b9);',
@@ -150,6 +154,9 @@
       'box-shadow:-18px 0 48px rgba(0,0,0,.28);font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}',
       '.dshm-panel[data-embedded="true"]{position:relative;inset:auto;width:100%;height:100%;min-width:0;max-width:none;z-index:auto;border:0;border-radius:0;box-shadow:none}',
       '.dshm-panel[data-embedded="true"] .dshm-resizer{display:none}',
+      '.dshm-tab-panel{position:relative;inset:auto;width:100%;height:100%;min-width:0;max-width:none;z-index:auto;display:flex;flex-direction:column;overflow:hidden;border:0;border-radius:0;box-shadow:none;',
+      'background:var(--dsw-alias-bg-module-platform,#1f1f1f);color:var(--dsw-alias-label-primary,#f2f2f2);',
+      'font:13px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;box-sizing:border-box}',
       'html.dsh-meeting-sidebar #root{margin-right:var(--dsh-meeting-width,540px)!important;transition:margin-right .22s ease}',
 
       '@media (max-width:900px){',
@@ -396,7 +403,6 @@
       'animation:dshm-spin .8s linear infinite;display:inline-block;vertical-align:-2px}',
       '@keyframes dshm-spin{to{transform:rotate(360deg)}}'
     ].join('');
-    document.head.appendChild(style);
   }
 
   function formatClock(ms) {
@@ -1116,7 +1122,7 @@
           render() {
             if (this.state.error) {
               var embedded = Boolean(this.props && this.props.embedded);
-              return h('div', { className: 'dshm-panel', 'data-embedded': embedded ? 'true' : 'false' },
+              return h('div', { className: embedded ? 'dshm-tab-panel' : 'dshm-panel', 'data-embedded': embedded ? 'true' : 'false' },
                 h('div', { className: 'dshm-head' },
                   h('div', { className: 'dshm-titleRow' },
                     h('span', { className: 'dshm-dot', 'data-tone': 'error' }),
@@ -2253,10 +2259,29 @@
           }
 
           return h('div', {
-            className: 'dshm-panel',
+            className: embedded ? 'dshm-tab-panel' : 'dshm-panel',
             role: embedded ? undefined : 'dialog',
             'aria-label': '会议助手',
             'data-embedded': embedded ? 'true' : 'false',
+            style: embedded ? {
+              position: 'relative',
+              top: 'auto',
+              right: 'auto',
+              bottom: 'auto',
+              left: 'auto',
+              width: '100%',
+              height: '100%',
+              minWidth: 0,
+              maxWidth: 'none',
+              zIndex: 'auto',
+              border: 0,
+              borderRadius: 0,
+              boxShadow: 'none',
+              boxSizing: 'border-box',
+              overflow: 'hidden',
+              flex: '1 1 auto',
+              minHeight: 0
+            } : undefined,
             'data-drag': dragOver ? 'true' : 'false',
             onDragOver: onPanelDragOver,
             onDragEnter: onPanelDragEnter,
