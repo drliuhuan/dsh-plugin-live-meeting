@@ -3,7 +3,17 @@
 
 import assert from 'node:assert/strict';
 import { PcmTo16k, VadSegmenter, encodeWav16 } from '../lib/audio.mjs';
-import { parseAgenda, currentAgenda, agendaSpeakers, normalizeOcrText } from '../lib/agenda.mjs';
+import {
+  agendaParticipants,
+  formatAgendaEditorText,
+  parseAgenda,
+  currentAgenda,
+  agendaSpeakers,
+  normalizeOcrText,
+  singleParticipantName,
+  singleParticipantOrg
+} from '../lib/agenda.mjs';
+import { EchoGate, correlation, textSimilarity } from '../lib/aec.mjs';
 import { extractOfficeText } from '../lib/office.mjs';
 import { SpeakerClusterer } from '../lib/speaker.mjs';
 import {
@@ -135,6 +145,18 @@ const multiSession = parseAgenda(JSON.stringify([{
 assert.equal(multiSession.entries[0].participants.length, 2);
 assert.equal(multiSession.entries[0].speaker, '张医生、李主任');
 assert.equal(multiSession.entries[0].org, '市医院、省医院');
+// A slot with several participants is several people taking turns: it must not
+// become one name suggestion for a new voice cluster.
+assert.equal(singleParticipantName(multiSession.entries[0]), '');
+assert.equal(singleParticipantName(parsed.entries[0]), '张医生');
+assert.equal(singleParticipantOrg(parsed.entries[0]), '市医院');
+assert.deepEqual(
+  agendaParticipants(multiSession.entries).map((item) => item.name),
+  ['张医生', '李主任']
+);
+const structuredAgendaText = formatAgendaEditorText(multiSession.entries);
+assert.match(structuredAgendaText, /14:00-14:30 张医生（市医院）、李主任（省医院）：圆桌讨论/);
+assert.equal(formatAgendaEditorText([]), '');
 
 function crc32(buffer) {
   let crc = 0xffffffff;
@@ -228,4 +250,72 @@ const wav = encodeWav16(segments[0].samples);
 assert.equal(wav.subarray(0, 4).toString(), 'RIFF');
 assert.equal(wav.readUInt32LE(24), 16000);
 
-console.log('selftest: agenda parsing, OCR spacing, OOXML extraction, user-only script prompts, speaker clustering, audio/VAD all passed');
+// --- microphone echo gating (loopback as the reference signal) --------------
+const SAMPLE_RATE = 16000;
+function lcg(seed) {
+  let state = seed >>> 0;
+  return function () {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+/** Speech-like noise: white noise inside random 10 ms amplitude envelopes. */
+function speechLike(seconds, seed, amplitude) {
+  const random = lcg(seed);
+  const samples = new Float32Array(Math.round(seconds * SAMPLE_RATE));
+  const frame = Math.round(SAMPLE_RATE * 0.01);
+  let level = amplitude;
+  for (let index = 0; index < samples.length; index += 1) {
+    if (index % frame === 0) level = amplitude * (0.15 + random() * 0.85);
+    samples[index] = (random() * 2 - 1) * level;
+  }
+  return samples;
+}
+const echoReference = speechLike(1.6, 7, 0.2); // wall clock 1000..2600 ms
+const micLength = Math.round(0.8 * SAMPLE_RATE);
+const micNoise = speechLike(0.8, 11, 0.0015);
+const echoOnly = new Float32Array(micLength);
+// Microphone at 1500..2300 ms contains the reference from 1350..2150 ms.
+const referenceOffset = Math.round(0.35 * SAMPLE_RATE);
+for (let index = 0; index < micLength; index += 1) {
+  echoOnly[index] = echoReference[referenceOffset + index] * 0.25 + micNoise[index];
+}
+const gate = new EchoGate();
+gate.pushReference(echoReference, 2600);
+const echoDecision = gate.decide(echoOnly, 1500, 2300);
+assert.equal(echoDecision.echo, true, JSON.stringify(echoDecision));
+assert.equal(echoDecision.action, 'drop');
+assert.ok(echoDecision.r >= 0.75, `r=${echoDecision.r}`);
+assert.ok(Math.abs(echoDecision.lagMs - 150) <= 30, `lag=${echoDecision.lagMs}`);
+
+// Double talk: the user speaks over the echo, so the segment must be kept.
+const nearEndSpeech = speechLike(0.8, 23, 0.9);
+const doubleTalk = new Float32Array(micLength);
+for (let index = 0; index < micLength; index += 1) doubleTalk[index] = echoOnly[index] + nearEndSpeech[index];
+const doubleGate = new EchoGate();
+doubleGate.pushReference(echoReference, 2600);
+const talkDecision = doubleGate.decide(doubleTalk, 1500, 2300);
+assert.equal(talkDecision.echo, false, JSON.stringify(talkDecision));
+assert.equal(talkDecision.action, 'keep');
+
+// A silent loopback cannot be the echo source.
+const quietGate = new EchoGate();
+quietGate.pushReference(speechLike(1.0, 5, 0.00001), 2000);
+const quietDecision = quietGate.decide(speechLike(0.6, 9, 0.05), 1600, 2200);
+assert.equal(quietDecision.action, 'keep');
+assert.equal(quietDecision.reason, 'silent-reference');
+
+// Shadow mode records the echo but leaves the audio untouched.
+const shadowGate = new EchoGate({ shadow: true });
+shadowGate.pushReference(echoReference, 2600);
+const shadowDecision = shadowGate.decide(echoOnly, 1500, 2300);
+assert.equal(shadowDecision.echo, true);
+assert.equal(shadowDecision.action, 'keep');
+
+// Text-level duplicate backstop.
+assert.ok(textSimilarity('对，我们下周再定。', '对我们下周再定') > 0.9);
+assert.ok(textSimilarity('我们下周再定', '今天先讨论预算') < 0.3);
+assert.equal(correlation([1, 2, 3], [1, 2, 3]), 1);
+assert.ok(correlation([1, 2, 3], [1, 2, 0]) < 1);
+
+console.log('selftest: agenda parsing, OCR spacing, OOXML extraction, user-only script prompts, speaker clustering, audio/VAD, echo gating all passed');
