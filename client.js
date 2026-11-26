@@ -1040,7 +1040,11 @@
                   return h('button', {
                     key: 'r:' + person.name, type: 'button', className: 'dshm-menuItem',
                     'data-current': turn.speakerName === person.name ? 'true' : 'false',
-                    onClick: function () { props.onPickPerson(turn.id, person.name, person.org); }
+                    onClick: function () {
+                      // Picking a name from the agenda is the main path for
+                      // "this voice is that person": honor the sync checkbox too.
+                      props.onPickPerson(turn.id, person.name, person.org, syncVoiceprint === true);
+                    }
                   }, person.name + (person.org ? '（' + person.org + '）' : ''));
                 }),
                 speakers.length > 0 ? h('div', { className: 'dshm-menuLabel' }, '已识别的发言人') : null,
@@ -2009,17 +2013,18 @@
             setAgendaBusy(true);
             api(API.agendaFile, { fileBase64: dataUrl, filename: filename }).then(function (payload) {
               setAgendaFilename(filename);
-              var agenda = payload.agenda || (payload.state && payload.state.agenda);
+              var state = payload.state || payload.snapshot || null;
+              var agenda = payload.agenda || (state && state.agenda);
               setAgendaWarnings(agenda && Array.isArray(agenda.warnings) ? agenda.warnings : []);
-              if (payload.state) setSnapshot(payload.state);
+              if (state) setSnapshot(state);
               var entries = agenda && Array.isArray(agenda.entries) ? agenda.entries : [];
               if (payload.parsed === true || (agenda && agenda.parsedBy === 'llm' && entries.length > 0)) {
                 // The import already ran the model; replace the OCR / extracted
                 // source text with the structured entries, never show it.
-                setAgendaDraft(structuredAgendaTextFrom(payload, payload.state, entries));
+                setAgendaDraft(structuredAgendaTextFrom(payload, state, entries));
                 setAgendaFilename('');
                 setAgendaSource('');
-                var savedName = payload.state && payload.state.profile ? payload.state.profile.userName : profile.userName;
+                var savedName = state && state.profile ? state.profile.userName : profile.userName;
                 notify(entries.length > 0
                   ? '已导入并解析：' + entries.length + ' 条' +
                     (agendaMatchesUser(entries, savedName) ? '，正在生成我的讲词与串词' : '')
@@ -2568,7 +2573,7 @@
                 )
               ),
               h('div', { className: 'dshm-bar' },
-                h('button', {
+                (!active || isLive) ? h('button', {
                   type: 'button', className: 'dshm-btn dshm-micBtn', 'data-kind': 'ghost',
                   'data-on': micOn ? 'true' : 'false',
                   'aria-pressed': micOn ? 'true' : 'false',
@@ -2579,7 +2584,8 @@
                   onClick: toggleMic
                 },
                   h('span', { className: 'dshm-micDot', 'aria-hidden': 'true' }, micOn ? '◉' : '○'),
-                  micBusy ? ' 处理中…' : ' 麦克风：' + (micOn ? '开' : '关')),
+                  micBusy ? ' 处理中…' : ' 麦克风：' + (micOn ? '开' : '关'))
+                  : null,
                 isLive
                   ? h('button', {
                     type: 'button', className: 'dshm-btn', 'data-kind': 'danger', disabled: busy === 'stop',
@@ -3254,15 +3260,15 @@
               );
             }
 
-            // The host speaks for the whole agenda, so a missing personal name
-            // must not block generation; every other role keeps the old rule.
+            // The host speaks for the whole agenda, but the draft is still in
+            // "my" voice, so a name is required for every role.
             var blocked = '';
-            if (!host) {
-              blocked = !userName
-                ? '先在设置里填写「我的姓名」，才会生成属于你的讲词与串词。'
-                : ownEntries.length === 0
-                  ? '日程里没有出现“' + userName + '”，所以不生成讲词。请让日程里的讲者写法与你的姓名一致，或修改日程/姓名后重试。'
-                  : '';
+            if (!userName) {
+              blocked = host
+                ? '先在设置里填写「我的姓名」；主持词以「我」的口吻写，需要你的姓名。'
+                : '先在设置里填写「我的姓名」，才会生成属于你的讲词与串词。';
+            } else if (!host && ownEntries.length === 0) {
+              blocked = '日程里没有出现“' + userName + '”，所以不生成讲词。请让日程里的讲者写法与你的姓名一致，或修改日程/姓名后重试。';
             }
 
             return h('div', { className: 'dshm-section' },

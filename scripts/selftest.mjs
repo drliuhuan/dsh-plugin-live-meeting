@@ -2,6 +2,9 @@
 // Run with `npm run selftest`.
 
 import assert from 'node:assert/strict';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { PcmTo16k, VadSegmenter, encodeWav16 } from '../lib/audio.mjs';
 import {
   agendaParticipants,
@@ -14,6 +17,7 @@ import {
   singleParticipantOrg
 } from '../lib/agenda.mjs';
 import { EchoGate, correlation, textSimilarity } from '../lib/aec.mjs';
+import { MeetingService, normalizeSettings } from '../lib/meeting.mjs';
 import { extractOfficeText } from '../lib/office.mjs';
 import { SpeakerClusterer } from '../lib/speaker.mjs';
 import {
@@ -364,4 +368,92 @@ assert.ok(textSimilarity('我们下周再定', '今天先讨论预算') < 0.3);
 assert.equal(correlation([1, 2, 3], [1, 2, 3]), 1);
 assert.ok(correlation([1, 2, 3], [1, 2, 0]) < 1);
 
-console.log('selftest: agenda parsing, OCR spacing, OOXML extraction, user-only script prompts, speaker clustering, audio/VAD, echo gating all passed');
+// --- meeting service: editable records and structured-agenda start ---------
+const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'lm-selftest-'));
+const quietLogger = { warn() {}, info() {}, error() {} };
+const fakeCtx = { logger: quietLogger, get() { return undefined; } };
+const service = new MeetingService(fakeCtx, { dataRoot: tmpRoot, logger: quietLogger });
+const meetingDir = path.join(tmpRoot, '20260101-000000-aaaa');
+await fsp.mkdir(meetingDir, { recursive: true });
+const serviceAgenda = parseAgenda('14:00-14:30 张医生（市医院） 病例\n14:30-15:00 讨论', 's.txt');
+const nowMs = Date.now();
+const makeLine = (id, speakerId, speakerName, text, startMs) => ({
+  id, at: nowMs, startMs, endMs: startMs + 2000, raw: text, text, translation: '',
+  speakerId, speakerName, speakerOrg: '', speakerSuggested: false, source: 'loopback',
+  correctionStatus: 'done', translationStatus: 'off', correctionError: null, turnId: null
+});
+const sl1 = makeLine('l1', 'sp1', '发言人 1', '第一段内容', 0);
+const sl2 = makeLine('l2', 'sp1', '发言人 1', '第二段内容', 5000);
+const serviceMeeting = {
+  id: '20260101-000000-aaaa',
+  dir: meetingDir,
+  ...normalizeSettings({ micEnabled: false }, {}),
+  agenda: { ...serviceAgenda, text: 'raw box text', updatedAt: nowMs },
+  status: 'listening', error: null, createdAt: nowMs, startedAt: nowMs, endedAt: 0,
+  readOnly: false, capture: null, micHandle: null, micConverter: null, micVad: null,
+  micBusy: false, micWallBase: null, micSamples: 0, echoGate: null,
+  echoState: { segments: 0, echo: 0, dropped: 0, last: null },
+  asrState: {}, speakerState: { phase: 'ready' }, speakerError: null,
+  speakersList: [{ id: 'sp1', name: '发言人 1', org: '', source: 'cluster' }],
+  clusterer: null, transcript: [sl1, sl2],
+  turns: [{
+    id: 't1', speakerId: 'sp1', speakerName: '发言人 1', speakerOrg: '', speakerSuggested: false,
+    startMs: 0, endMs: 7000, lines: [sl1, sl2], text: '第一段内容 第二段内容', translation: '',
+    refinedText: '整段校正：第一段内容；第二段内容', refinedThroughLineId: 'l2', refinedAt: nowMs,
+    correctionStatus: 'refined', updatedAt: nowMs
+  }],
+  turnSeq: 1, newSinceRefine: 0, refineState: { status: 'idle' }, refineBusy: false,
+  refineTimer: null, turnsTimer: null, answers: [], summary: { markdown: '', updatedAt: 0, status: 'idle', error: null, version: 0 },
+  lineSeq: 2, answerSeq: 0, newSinceSummary: 0, lastSummaryAttempt: 0, summaryBusy: false,
+  correctionPending: [], correctionBusy: false, correctionTimer: null, asrQueue: Promise.resolve(),
+  asrPending: 0, asrFailures: 0, stopping: false, transcriptTimer: null, answersTimer: null,
+  scripts: { status: 'idle', markdown: '', prompt: '', error: null, updatedAt: 0, agendaUpdatedAt: 0, userName: '' },
+  cues: [], cueState: { status: 'idle' }, cueBusy: false, cueTimer: null
+};
+service.active = serviceMeeting;
+
+// Deleting a line must also drop the whole-turn refinement that covered it.
+await service.deleteTranscript({ lineId: 'l2' });
+assert.equal(serviceMeeting.turns[0].refinedText, '');
+assert.doesNotMatch(serviceMeeting.turns[0].text, /整段校正/);
+
+// renaming a speaker after the meeting must reach turns.json (history reload).
+await service.renameSpeaker('sp1', '张医生', '市医院');
+const storedTurns = JSON.parse(await fsp.readFile(path.join(meetingDir, 'turns.json'), 'utf8'));
+assert.equal(storedTurns[0].speakerName, '张医生');
+
+// A structured (hand-edited) pending agenda must survive start() unchanged:
+// re-parsing the rendered text would collapse the two participants into one.
+const renderedMulti = formatAgendaEditorText(multiSession.entries);
+service.active = null;
+service.runCapturePipeline = async () => {};
+service.refineAgendaWithLlm = () => {};
+service.pendingAgenda = {
+  entries: multiSession.entries,
+  warnings: [],
+  source: 'manual',
+  text: renderedMulti,
+  parsedBy: 'manual',
+  updatedAt: nowMs
+};
+const started = await service.start({ micEnabled: false, agendaText: renderedMulti });
+assert.equal(started.active.agenda.entries.length, 1);
+assert.equal(started.active.agenda.entries[0].participants.length, 2);
+assert.equal(started.active.agenda.parsedBy, 'manual');
+service.dispose();
+// start() fires a few fire-and-forget writes; let them settle before cleanup.
+await new Promise((resolve) => setTimeout(resolve, 80));
+await fsp.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+
+// Clusterer ids survive a merge without being reused.
+const idClusterer = new SpeakerClusterer({ threshold: 0.66 });
+const idA = idClusterer.assign(vector(0.1), 1800);
+const idB = idClusterer.assign(vector(1.7), 1800);
+const idC = idClusterer.assign(vector(2.9), 1800);
+assert.notEqual(idA.id, idB.id);
+assert.equal(idClusterer.merge(idA.id, idB.id), true);
+const idD = idClusterer.create(vector(4.1));
+assert.ok(![idA.id, idB.id, idC.id].includes(idD.id), `reused id ${idD.id}`);
+assert.equal(idClusterer.list().filter((speaker) => speaker.id === idD.id).length, 1);
+
+console.log('selftest: agenda parsing, OCR spacing, OOXML extraction, user-only script prompts, speaker clustering, audio/VAD, echo gating, editable records, structured-agenda start all passed');
