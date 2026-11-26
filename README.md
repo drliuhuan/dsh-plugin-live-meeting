@@ -54,12 +54,17 @@ already configured in DSH.
   per-session transition that summarises the speakers of the session that just
   ended (by name, including a panel's participants one by one) and introduces the
   next one, and a closing; a speaker or panelist only gets "thanks for the
-  introduction". A card can also be requested from the panel for any agenda item
+  introduction". A card's length follows the agenda slot (a five-minute address
+  becomes a full ~1000–1200-character speech, while a short handover stays
+  short). A card can also be requested from the panel for any agenda item
   (any item for a host).
 - **Host drafts**: when the role is host, the draft is not limited to the user's
   own slots — it contains the opening, every per-session transition, and the
   closing, using live transcript and minutes, the meeting context, and the
   structured agenda. Regenerating it during the meeting picks up what was said.
+  Speech length follows the agenda: roughly 200–240 Chinese characters per
+  minute, so a five-minute opening address is about 1000–1200 characters instead
+  of a two-sentence greeting.
 - Local CAM++ voice clustering into 发言人 1/2/3 (about 27 MB): consecutive
   turns by one speaker are merged into one continuous block; a one-minute pass
   re-corrects the whole conversation to join lines split by the 10-second ASR

@@ -79,6 +79,22 @@ const customPrompt = buildScriptSystemPrompt({
 });
 assert.match(customPrompt, /每段讲词不超过 80 字，语气更轻松/);
 assert.doesNotMatch(customPrompt, /每段讲词 120–300 字/);
+// A slot's own duration decides the draft length (5 min ≈ 950–1200 chars).
+const fiveMinuteSlot = {
+  startMin: 600,
+  endMin: 605,
+  speaker: '张医生',
+  org: '市医院',
+  topic: '开场致辞',
+  participants: [{ name: '张医生', org: '市医院' }]
+};
+const sizedScript = buildScriptSystemPrompt({
+  entries: [fiveMinuteSlot],
+  userName: '张医生',
+  prompt: ''
+});
+assert.match(sizedScript, /（5 分钟）/);
+assert.match(sizedScript, /应写约 950–1200 字/);
 const liAgenda = formatScriptAgenda(parsed.entries, '李主任').split('\n');
 assert.ok(!liAgenda[0].includes('［我的环节］'));
 assert.ok(liAgenda[1].includes('［我的环节］'));
@@ -117,6 +133,36 @@ assert.match(hostCuePrompt, /张医生：我们做了 32 例/);
 const thanksCuePrompt = buildCueSystemPrompt({ kind: 'thanks', role: 'speaker', entry: cueAgenda[2], entries: cueAgenda, userName: '我' });
 assert.match(thanksCuePrompt, /感谢主持人的介绍/);
 assert.doesNotMatch(thanksCuePrompt, /总结刚刚结束环节/);
+
+// A five-minute opening address must be sized like a five-minute speech, not
+// a two-sentence greeting: the agenda duration decides the character budget.
+const fiveMinuteOpening = {
+  startMin: 1140,
+  endMin: 1145,
+  speaker: '我',
+  org: '本院',
+  topic: '开场致辞',
+  participants: [{ name: '我', org: '本院' }]
+};
+const openingWithDuration = buildCueSystemPrompt({
+  kind: 'opening',
+  role: 'host',
+  entry: fiveMinuteOpening,
+  entries: [fiveMinuteOpening],
+  userName: '我',
+  domainLabel: '医学',
+  nowClock: '19:00'
+});
+assert.match(openingWithDuration, /共 5 分钟/);
+assert.match(openingWithDuration, /950–1200 字/);
+const fifteenSecondThanks = buildCueSystemPrompt({
+  kind: 'thanks',
+  role: 'speaker',
+  entry: fiveMinuteOpening,
+  entries: [fiveMinuteOpening],
+  userName: '我'
+});
+assert.match(fifteenSecondThanks, /30–60 字/);
 
 // --- OCR spacing and OOXML text extraction --------------------------------
 // A line that is only a time range (or only a dash) must not throw: every
