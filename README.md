@@ -49,29 +49,66 @@ already configured in DSH.
   survives page reloads and is stored with the meeting.
 - **Cue cards (串词), just in time**: transitions are not written up front. While
   the meeting is being listened to, two minutes before one of the user's moments
-  the plugin writes that one card from the agenda *and* what has been recognized
-  so far. The role decides its shape: a host gets an opening, a per-session
-  transition that summarises the session that just ended and introduces the next
-  one, and a closing; a speaker or panelist only gets "thanks for the
-  introduction". A card can also be requested from the panel for any of the
-  user's agenda items.
+  the plugin writes that one card from the structured agenda *and* what has been
+  recognized so far. The role decides its shape: a host gets an opening, a
+  per-session transition that summarises the speakers of the session that just
+  ended (by name, including a panel's participants one by one) and introduces the
+  next one, and a closing; a speaker or panelist only gets "thanks for the
+  introduction". A card can also be requested from the panel for any agenda item
+  (any item for a host).
+- **Host drafts**: when the role is host, the draft is not limited to the user's
+  own slots — it contains the opening, every per-session transition, and the
+  closing, using live transcript and minutes, the meeting context, and the
+  structured agenda. Regenerating it during the meeting picks up what was said.
 - Local CAM++ voice clustering into 发言人 1/2/3 (about 27 MB): consecutive
   turns by one speaker are merged into one continuous block; a one-minute pass
   re-corrects the whole conversation to join lines split by the 10-second ASR
   window. Labels are suggestions, not identity recognition, and can be renamed
-  with an organization.
+  with an organization. Renaming a speaker can follow the voiceprint: every
+  record of that voice is relabeled and same-name identities are merged. A slot
+  with several participants is treated as people taking turns — the agenda never
+  stamps several names onto one voice.
 - Optional microphone capture labelled **自己** (yourself), separate from the
-  meeting speakers. Headphones are recommended to avoid echo duplicates.
+  meeting speakers, with a **microphone switch right before 开始听会** (on by
+  default). Echo from the speakers is suppressed: the loopback stream is the
+  reference, and a microphone utterance that is only a delayed copy of it is
+  dropped before recognition (see *Echo suppression*).
 - Per-line translation is **off by default**; English, Simplified Chinese,
   Japanese, or Korean can be enabled per meeting.
 - A right-hand sidebar: opening the panel shifts the DSH shell left, and the
   header icon breathes green while listening.
 - Raw ASR text kept behind a disclosure, with retry for failed corrections.
-- Minutes on demand (conclusion / discussion / decisions / action items / risks); nothing is generated on a timer, and the agenda is included in the prompt
-  and a final version when the meeting ends.
+- **Editable record**: any recognized turn or line can be deleted while listening
+  and after the meeting; speaker chips stay editable on a finished/historical
+  meeting; minutes can be regenerated on demand (also after the meeting ended).
+- **Minutes as a record of the flow**: on demand, the model writes the meeting
+  flow and content in natural paragraphs (what each session and speaker covered,
+  what was discussed and agreed) — no fixed "decisions / action items / risks"
+  sections, no bullet lists. A final version is written when the meeting ends.
+- The agenda box shows the **AI-structured agenda** after a parse (never the raw
+  OCR/extracted text), and every generation path (correction, minutes, Q&A,
+  drafts, cues) uses the structured agenda entries, not the box text.
 - Q&A grounded in the minutes and transcript, with `[mm:ss]` citations and
   optional `ctx.web` search sources.
 - On-disk history under `~/.dsh/meetings/<id>/`.
+
+## Echo suppression
+
+The plugin records the default render endpoint (loopback) and the microphone at
+the same time. The loopback stream is the reference for the microphone:
+
+1. both streams are reduced to 10 ms RMS→dB envelopes,
+2. a microphone VAD segment is correlated against the loopback envelope over a
+   0–450 ms delay search,
+3. the segment is treated as speaker echo when the envelopes are strongly
+   correlated **and** the microphone is not louder than the loopback by more than
+   6 dB (louder means the user is talking over it — double-talk, kept),
+4. a text-level backstop drops a mic line that repeats a recent loopback line.
+
+Tuning: `DSH_MEETING_AEC=shadow` records the decisions without dropping audio,
+`DSH_MEETING_AEC=off` disables the gate. Headphones are still the best remedy;
+the gate cannot undo driver-level AEC, Bluetooth nonlinear echo, or a user
+speaking far quieter than the speakers.
 
 ## My speech drafts (讲词 / 串词)
 
@@ -97,8 +134,8 @@ three-step setup: name / organization / role, agenda upload (txt, md, csv, json,
 PDF, Word, **PPT**, Excel, ODF, screenshots); the pages are rendered to images and handed to the model together with the extracted text, and the model decides whether to read the text, look at the pages, or both) parsed into a
 structured agenda (and into the meeting topic, domain and the user's role), then
 confirmation in an editable table — start/end time, speaker, organization and
-topic can all be changed, rows added or removed, and microphone capture is a
-checkbox (on by default).
+topic can all be changed, rows added or removed. The microphone switch sits right
+before **开始听会** and is on by default.
 
 As soon as that is confirmed, a host — or whoever owns the first agenda slot —
 gets their first cue card (opening / thanks) immediately, without starting the
@@ -140,12 +177,16 @@ privacy notes, and troubleshooting.
 system audio -> WASAPI loopback (native helper) -> downmix/resample 16 kHz
   -> energy VAD utterances -> CAM++ speaker embedding + online clustering
   -> SenseVoice (local) -> DSH LLM (domain correction + translation) -> SSE
-  -> rolling summary (LLM) and Q&A (minutes + transcript + optional web search)
+  -> rolling minutes (LLM) and Q&A (minutes + transcript + optional web search)
 
-agenda (txt/md/csv/json) -> current time slot + speaker/org reference
+microphone -> WASAPI capture -> 16 kHz -> echo gate (loopback envelope
+  correlation, double-talk kept) -> labelled 自己
 
-agenda + my-name profile -> only slots whose speaker matches my name
-  -> LLM (editable writing prompt) -> Markdown 讲词/串词
+agenda (txt/md/csv/json) -> structured entries -> current time slot,
+speaker/org reference, and the only agenda input of every prompt
+
+structured agenda + my-name profile + role -> LLM (editable writing prompt)
+  -> Markdown 讲词/串词 (host: opening + per-session transitions + closing)
   -> stored with the meeting, or as a pending draft before it starts
 ```
 
