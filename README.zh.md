@@ -73,7 +73,7 @@ dsh plugin --profile desktop add D:\path\to\dsh-plugin-live-meeting
 dsh plugin --profile desktop add dsh-plugin-live-meeting
 
 # 或通过 plugin_manager 工具
-plugin_manager action=install_bundle target=dsh-plugin-live-meeting@0.2.0
+plugin_manager action=install_bundle target=dsh-plugin-live-meeting@0.3.0
 ```
 
 安装后按提示启用「语音输入」组合包。
