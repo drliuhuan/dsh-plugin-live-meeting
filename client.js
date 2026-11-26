@@ -36,6 +36,8 @@
     agendaFile: '/dsh-meeting/agenda-file',
     agendaCurrent: '/dsh-meeting/agenda-current',
     turnSpeaker: '/dsh-meeting/turn-speaker',
+    transcriptDelete: '/dsh-meeting/transcript-delete',
+    mic: '/dsh-meeting/mic',
     cue: '/dsh-meeting/cue',
     agendaEntries: '/dsh-meeting/agenda-entries',
     newMeeting: '/dsh-meeting/new'
@@ -197,6 +199,13 @@
       '.dshm-btn[data-kind="danger"]{border-color:rgba(255,123,123,.5);color:#ff9a9a}',
       '.dshm-btn[data-kind="ghost"]{border-color:transparent;color:var(--dsw-alias-label-secondary,#b9b9b9)}',
       '.dshm-btn[data-kind="small"]{padding:3px 9px;font-size:11px}',
+      '.dshm-btn[data-on="true"]{color:var(--dsw-alias-state-business-primary,#7fb0ff);',
+      'border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary,#7fb0ff) 55%,transparent)}',
+      '.dshm-btn[data-on="false"]{color:var(--dsw-alias-label-caption,#8a8a8a)}',
+      '.dshm-micBtn{display:inline-flex;align-items:center;gap:5px}',
+      '.dshm-micBtn[data-on="true"] .dshm-micDot{color:#51d88a}',
+      '.dshm-micBtn[data-on="false"] .dshm-micDot{color:var(--dsw-alias-label-caption,#777)}',
+      '.dshm-micDot{font-size:12px;line-height:1;flex:none}',
       '.dshm-timer{margin-left:auto;font:12px ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-tertiary,#9a9a9a)}',
       '.dshm-tabs{display:flex;gap:2px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));flex:none}',
       '.dshm-agendaBar{display:flex;align-items:center;gap:6px;padding:5px 14px;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));',
@@ -311,6 +320,16 @@
       '.dshm-turnText{font-size:13px;line-height:1.68;word-break:break-word;white-space:pre-wrap}',
       '.dshm-turnText[data-pending="true"]{color:var(--dsw-alias-label-secondary,#c7c7c7)}',
       '.dshm-segment{display:flex;gap:6px;font-size:10.5px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#9a9a9a);margin-top:2px}',
+      '.dshm-segmentText{flex:1;min-width:0;word-break:break-word}',
+      '.dshm-turnDel{appearance:none;border:1px solid transparent;border-radius:5px;background:0 0;',
+      'color:var(--dsw-alias-label-caption,#777);font:inherit;font-size:10.5px;line-height:16px;padding:0 5px;',
+      'cursor:pointer;flex:none}',
+      '.dshm-turnDel:hover{color:#ff9a9a;background:rgba(255,123,123,.12);border-color:rgba(255,123,123,.35)}',
+      '.dshm-segDel{appearance:none;border:0;border-radius:4px;background:0 0;color:var(--dsw-alias-label-caption,#777);',
+      'font:inherit;font-size:10px;line-height:14px;padding:0 4px;margin-left:auto;cursor:pointer;flex:none}',
+      '.dshm-segDel:hover{color:#ff9a9a}',
+      '.dshm-menuCheck{display:flex;align-items:center;gap:6px;padding:5px 2px 1px;font-size:10.5px;',
+      'color:var(--dsw-alias-label-secondary,#c7c7c7);cursor:pointer}',
       '.dshm-segmentTime{font:10px ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-caption,#777);flex:none}',
       '.dshm-followWrap{position:sticky;bottom:10px;display:flex;justify-content:center;padding:0 14px 12px;pointer-events:none}',
       '.dshm-followBtn{pointer-events:auto;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.2));border-radius:999px;',
@@ -451,8 +470,15 @@
         people = entry.participants.map(function (person) {
           return { name: (person && person.name) || '', org: (person && person.org) || '' };
         });
-      } else if (entry && (entry.speaker || entry.org)) {
-        people = [{ name: entry.speaker || '', org: entry.org || '' }];
+      } else if (entry && entry.speaker) {
+        // Legacy entries may carry several names in one "speaker" string.
+        people = String(entry.speaker).split(/[、,，;；\/／]+/).map(function (part) {
+          return { name: part.trim(), org: entry.org || '' };
+        }).filter(function (person) {
+          return person.name || person.org;
+        });
+      } else if (entry && entry.org) {
+        people = [{ name: '', org: entry.org || '' }];
       }
       return {
         start: entry && entry.startMin !== null && entry.startMin !== undefined ? clockMin(entry.startMin) : '',
@@ -507,13 +533,88 @@
     return { status: 'ended', entry: list[list.length - 1], clock: clockMin(minutes) };
   }
 
+  // One agenda entry can host several participants.  They are separate people:
+  // only the *display* joins them with "、", never the roster or the candidate
+  // menus.
+  function agendaEntryPersonNames(entry) {
+    if (!entry) return [];
+    var names = [];
+    if (Array.isArray(entry.participants)) {
+      entry.participants.forEach(function (person) {
+        var name = String((person && person.name) || '').trim();
+        if (name) names.push(name);
+      });
+    }
+    if (names.length === 0 && entry.speaker) {
+      String(entry.speaker).split(/[、,，;；\/／]+/).forEach(function (part) {
+        var name = part.trim();
+        if (name) names.push(name);
+      });
+    }
+    return names;
+  }
+
+  function agendaPeopleText(entry) {
+    if (!entry) return '';
+    var parts = [];
+    if (Array.isArray(entry.participants)) {
+      entry.participants.forEach(function (person) {
+        var name = String((person && person.name) || '').trim();
+        var org = String((person && person.org) || '').trim();
+        if (name) parts.push(org ? name + '（' + org + '）' : name);
+        else if (org) parts.push(org);
+      });
+    }
+    if (parts.length === 0 && entry.speaker) {
+      var org = String(entry.org || '').trim();
+      parts.push(String(entry.speaker) + (org ? '（' + org + '）' : ''));
+    }
+    return parts.join('、');
+  }
+
   function agendaEntryText(entry) {
     if (!entry) return '';
     var time = entry.startMin !== null && entry.startMin !== undefined
       ? clockMin(entry.startMin) + (entry.endMin !== null && entry.endMin !== undefined ? '-' + clockMin(entry.endMin) : '')
       : '未定时间';
-    var who = entry.speaker ? entry.speaker + (entry.org ? '（' + entry.org + '）' : '') : '';
+    var who = agendaPeopleText(entry);
     return time + ' ' + who + (who && entry.topic ? '：' : '') + (entry.topic || '');
+  }
+
+  // Host contract: `agenda.structuredText` is the structured entries rendered
+  // for the agenda box.  Older Hosts do not have it, so rebuild the same shape
+  // from entries as a fallback (HH:MM-HH:MM 姓名（单位）：主题).
+  function structuredAgendaText(entries) {
+    return (Array.isArray(entries) ? entries : []).map(function (entry) {
+      if (!entry) return '';
+      var time = '';
+      if (entry.startMin !== null && entry.startMin !== undefined) {
+        time = clockMin(entry.startMin);
+        if (entry.endMin !== null && entry.endMin !== undefined) time += '-' + clockMin(entry.endMin);
+      }
+      var who = agendaPeopleText(entry);
+      var topic = String(entry.topic || '').trim();
+      return ((time ? time + ' ' : '') + who + (who && topic ? '：' : '') + topic).trim();
+    }).filter(function (line) { return line.length > 0; }).join('\n');
+  }
+
+  function structuredAgendaTextFrom(payload, state, entries) {
+    var agenda = payload && payload.agenda ? payload.agenda : null;
+    if (agenda && typeof agenda.structuredText === 'string' && agenda.structuredText.trim()) return agenda.structuredText;
+    var stateAgenda = state && state.agenda ? state.agenda : null;
+    if (stateAgenda && typeof stateAgenda.structuredText === 'string' && stateAgenda.structuredText.trim()) return stateAgenda.structuredText;
+    var activeAgenda = state && state.active && state.active.agenda ? state.active.agenda : null;
+    if (activeAgenda && typeof activeAgenda.structuredText === 'string' && activeAgenda.structuredText.trim()) return activeAgenda.structuredText;
+    return structuredAgendaText(entries);
+  }
+
+  // What the agenda box should show for a snapshot: the structured text when
+  // the Host has parsed the agenda, the source text only for legacy meetings.
+  function agendaBodyText(agenda) {
+    if (!agenda || typeof agenda !== 'object') return '';
+    if (typeof agenda.structuredText === 'string' && agenda.structuredText.trim()) return agenda.structuredText;
+    if (agenda.parsedBy === 'llm' && typeof agenda.structuredText === 'string') return agenda.structuredText;
+    return typeof agenda.text === 'string' ? agenda.text : '';
   }
 
   // Mirrors lib/script.mjs: the client needs the same "is this slot mine?"
@@ -533,7 +634,9 @@
     var name = String(userName || '').trim();
     if (name.length === 0) return false;
     return (Array.isArray(entries) ? entries : []).some(function (entry) {
-      return entry && nameMatches(entry.speaker, name);
+      return agendaEntryPersonNames(entry).some(function (personName) {
+        return nameMatches(personName, name);
+      });
     });
   }
 
@@ -904,6 +1007,7 @@
           var roster = Array.isArray(props.roster) ? props.roster : [];
           var [customName, setCustomName] = React.useState('');
           var [customOrg, setCustomOrg] = React.useState('');
+          var [syncVoiceprint, setSyncVoiceprint] = React.useState(true);
           var canPick = Boolean(props.onPickSpeaker || props.onPickPerson);
           return h('div', { className: 'dshm-turn', style: { borderLeftColor: color } },
             h('div', { className: 'dshm-turnHead' },
@@ -920,9 +1024,16 @@
               pending ? h('span', { className: 'dshm-pill', 'data-tone': 'busy' }, '校正中') : null,
               turn.refinedAt ? h('span', { className: 'dshm-pill', 'data-tone': 'good' }, '整段校正') : null,
               turn.correctionStatus === 'partial' ? h('span', { className: 'dshm-pill', 'data-tone': 'bad' }, '部分未校正') : null,
-              h('span', { className: 'dshm-groupTime' }, formatClock(turn.startMs) + '–' + formatClock(turn.endMs) + (duration >= 60000 ? ' · ' + Math.round(duration / 60000) + ' 分钟' : ''))
+              h('span', { className: 'dshm-groupTime' }, formatClock(turn.startMs) + '–' + formatClock(turn.endMs) + (duration >= 60000 ? ' · ' + Math.round(duration / 60000) + ' 分钟' : '')),
+              props.onDeleteTurn
+                ? h('button', {
+                  type: 'button', className: 'dshm-turnDel',
+                  'aria-label': '删除这一段转写', title: '删除这一段转写',
+                  onClick: function () { props.onDeleteTurn(turn.id); }
+                }, '删除')
+                : null
             ),
-            props.menu
+            props.menu && canPick
               ? h('div', { className: 'dshm-menu dshm-menuInline' },
                 roster.length > 0 ? h('div', { className: 'dshm-menuLabel' }, '与会人员（来自日程）') : null,
                 roster.map(function (person) {
@@ -962,9 +1073,15 @@
                     type: 'button', className: 'dshm-btn', 'data-kind': 'small',
                     disabled: !customName.trim(),
                     onClick: function () {
-                      if (customName.trim()) props.onPickPerson(turn.id, customName.trim(), customOrg.trim());
+                      if (customName.trim()) props.onPickPerson(turn.id, customName.trim(), customOrg.trim(), syncVoiceprint === true);
                     }
-                  }, '指定')))
+                  }, '指定')),
+                h('label', { className: 'dshm-check dshm-menuCheck' },
+                  h('input', {
+                    type: 'checkbox', checked: syncVoiceprint,
+                    onChange: function (event) { setSyncVoiceprint(event.target.checked); }
+                  }),
+                  '同步修改这个声纹的所有记录'))
               : null,
             h('div', { className: 'dshm-turnText', 'data-pending': pending ? 'true' : 'false' }, turn.text || (pending ? '识别中…' : '')),
             turn.translation ? h('div', { className: 'dshm-translation' }, turn.translation) : null,
@@ -974,7 +1091,14 @@
                 segments.map(function (segment) {
                   return h('div', { key: segment.id, className: 'dshm-segment' },
                     h('span', { className: 'dshm-segmentTime' }, formatClock(segment.startMs)),
-                    h('span', null, segment.raw || '')
+                    h('span', { className: 'dshm-segmentText' }, segment.raw || ''),
+                    props.onDeleteSegment
+                      ? h('button', {
+                        type: 'button', className: 'dshm-segDel',
+                        'aria-label': '删除这一行识别记录', title: '删除这一行识别记录',
+                        onClick: function () { props.onDeleteSegment(segment.id); }
+                      }, '删除')
+                      : null
                   );
                 })
               )
@@ -1176,6 +1300,7 @@
           var [loadError, setLoadError] = React.useState(null);
           var [connection, setConnection] = React.useState('connecting');
           var [busy, setBusy] = React.useState('');
+          var [micBusy, setMicBusy] = React.useState(false);
           var [tab, setTab] = React.useState(store.tab || 'transcript');
           var [toast, setToast] = React.useState(null);
           var [historyOpen, setHistoryOpen] = React.useState(false);
@@ -1477,7 +1602,7 @@
             if (!snapshot.active && saved) base = Object.assign(base, saved);
             setForm(base);
             var agenda = snapshot.active ? snapshot.active.agenda : snapshot.agenda;
-            setAgendaDraft(agenda && typeof agenda.text === 'string' ? agenda.text : '');
+            setAgendaDraft(agendaBodyText(agenda));
             setAgendaWarnings(agenda && Array.isArray(agenda.warnings) ? agenda.warnings : []);
           }, [snapshot]);
 
@@ -1604,6 +1729,36 @@
             }).then(function () { setBusy(''); });
           }
 
+          // Before the meeting starts the switch only edits the local form and
+          // travels with `start`.  During a live meeting it must stop/start the
+          // Host's microphone capture immediately.
+          function toggleMic() {
+            if (micBusy || busy === 'start' || busy === 'stop') return;
+            if (active && active.status === 'stopping') return;
+            var next = form.micEnabled === false;
+            if (isLive) {
+              setMicBusy(true);
+              api(API.mic, { enabled: next }).then(function (payload) {
+                if (payload.state) setSnapshot(payload.state);
+                var applied = payload.micEnabled === undefined ? next : payload.micEnabled !== false;
+                setForm(function (current) {
+                  var updated = Object.assign({}, current);
+                  updated.micEnabled = applied;
+                  return updated;
+                });
+                setMicBusy(false);
+                notify(applied ? '已开启麦克风采集' : '已关闭麦克风采集：不再把我说的话记成自己');
+              }).catch(function (error) {
+                setMicBusy(false);
+                notify('切换麦克风失败：' + error.message);
+              });
+              return;
+            }
+            update('micEnabled', next);
+            if (!micDevices.length) refreshDevices();
+            notify(next ? '麦克风已开启，开始听会时采集我的声音' : '麦克风已关闭，开始听会后不会采集我的声音');
+          }
+
           function applyLiveSettings() {
             if (busy) return;
             setBusy('settings');
@@ -1714,14 +1869,41 @@
           }
 
           // Pick a name from the agenda roster, or a name + organization typed
-          // in the same menu.
-          function pickTurnPerson(turnId, name, org) {
-            api(API.turnSpeaker, { turnId: turnId, name: name, org: org || '' }).then(function (payload) {
+          // in the same menu.  `sync` renames the whole voiceprint behind this
+          // turn (the Host ignores it for `null`/`self` identities).
+          function pickTurnPerson(turnId, name, org, sync) {
+            var body = { turnId: turnId, name: name, org: org || '' };
+            if (sync === true) body.sync = true;
+            api(API.turnSpeaker, body).then(function (payload) {
               if (payload.state) setSnapshot(payload.state);
               setSpeakerMenuTurn('');
-              notify('已指定发言人：' + name);
+              notify(sync === true ? '已指定发言人并同步这个声纹的所有记录：' + name : '已指定发言人：' + name);
             }).catch(function (error) {
               notify('指定发言人失败：' + error.message);
+            });
+          }
+
+          function deleteTranscriptTurn(turnId) {
+            if (!turnId) return;
+            if (typeof window !== 'undefined' && !window.confirm('删除这一整段转写？')) return;
+            api(API.transcriptDelete, { turnId: turnId }).then(function (payload) {
+              if (payload.state) setSnapshot(payload.state);
+              setSpeakerMenuTurn('');
+              notify('已删除这一段转写');
+            }).catch(function (error) {
+              notify('删除转写失败：' + error.message);
+            });
+          }
+
+          function deleteTranscriptLine(lineId) {
+            if (!lineId) return;
+            if (typeof window !== 'undefined' && !window.confirm('删除这一行识别记录？')) return;
+            api(API.transcriptDelete, { lineId: lineId }).then(function (payload) {
+              if (payload.state) setSnapshot(payload.state);
+              setSpeakerMenuTurn('');
+              notify('已删除这一行识别记录');
+            }).catch(function (error) {
+              notify('删除识别记录失败：' + error.message);
             });
           }
 
@@ -1776,9 +1958,10 @@
           }
 
           function regenerateScripts() {
+            var host = isHostRole();
             api(API.script, { prompt: scriptPrompt }).then(function (payload) {
               if (payload.state) setSnapshot(payload.state);
-              notify('正在生成我的讲词与串词…');
+              notify(host ? '正在结合实时转写与纪要为每个环节生成串词…' : '正在生成我的讲词与串词…');
             }).catch(function (error) {
               notify('生成讲词失败：' + error.message);
             });
@@ -1801,6 +1984,16 @@
               var agenda = payload.agenda || (payload.state && payload.state.agenda);
               setAgendaWarnings(agenda && Array.isArray(agenda.warnings) ? agenda.warnings : []);
               var entries = agenda && Array.isArray(agenda.entries) ? agenda.entries : [];
+              var parsedOk = entries.length > 0 && (payload.parsed === true || (agenda && agenda.parsedBy === 'llm'));
+              if (parsedOk) {
+                // The box should show the structured result the model parsed,
+                // never the raw text that was pasted in.
+                var structured = structuredAgendaTextFrom(payload, payload.state, entries);
+                if (structured) {
+                  setAgendaDraft(structured);
+                  setAgendaFilename('');
+                }
+              }
               var savedName = payload.state && payload.state.profile ? payload.state.profile.userName : profile.userName;
               notify('日程已用 AI 解析：' + entries.length + ' 条' +
                 (agendaMatchesUser(entries, savedName) ? '，正在生成我的讲词与串词' : ''));
@@ -1815,18 +2008,24 @@
           function loadAgendaAttachment(dataUrl, filename) {
             setAgendaBusy(true);
             api(API.agendaFile, { fileBase64: dataUrl, filename: filename }).then(function (payload) {
-              if (typeof payload.text === 'string') setAgendaDraft(payload.text);
               setAgendaFilename(filename);
-              setAgendaWarnings(payload.agenda && Array.isArray(payload.agenda.warnings) ? payload.agenda.warnings : []);
+              var agenda = payload.agenda || (payload.state && payload.state.agenda);
+              setAgendaWarnings(agenda && Array.isArray(agenda.warnings) ? agenda.warnings : []);
               if (payload.state) setSnapshot(payload.state);
-              var entries = payload.agenda && Array.isArray(payload.agenda.entries) ? payload.agenda.entries : [];
-              if (payload.parsed) {
-                // The import already ran the model; nothing left to click.
+              var entries = agenda && Array.isArray(agenda.entries) ? agenda.entries : [];
+              if (payload.parsed === true || (agenda && agenda.parsedBy === 'llm' && entries.length > 0)) {
+                // The import already ran the model; replace the OCR / extracted
+                // source text with the structured entries, never show it.
+                setAgendaDraft(structuredAgendaTextFrom(payload, payload.state, entries));
+                setAgendaFilename('');
                 setAgendaSource('');
                 var savedName = payload.state && payload.state.profile ? payload.state.profile.userName : profile.userName;
-                notify('已导入并解析：' + entries.length + ' 条' +
-                  (agendaMatchesUser(entries, savedName) ? '，正在生成我的讲词与串词' : ''));
+                notify(entries.length > 0
+                  ? '已导入并解析：' + entries.length + ' 条' +
+                    (agendaMatchesUser(entries, savedName) ? '，正在生成我的讲词与串词' : '')
+                  : '已导入，但 AI 没有识别出日程条目；可修改文字后点「应用日程」重试');
               } else {
+                if (typeof payload.text === 'string') setAgendaDraft(payload.text);
                 setAgendaSource(payload.kind === 'image' ? 'image' : 'file');
                 notify('已导入文字，但 AI 解析失败：' + (payload.error || '未知错误') + '；可修改文字后点「应用日程」重试');
               }
@@ -2210,6 +2409,16 @@
             });
           }
 
+          // The host writes the connective tissue for the whole agenda; the
+          // other roles only get their own session.  The Host snapshot wins;
+          // the setup form is only a fallback before the settings are saved.
+          function isHostRole() {
+            var settingsRole = snapshot && snapshot.settings ? String(snapshot.settings.role || '') : '';
+            var activeRole = active ? String(active.role || '') : '';
+            var role = settingsRole || activeRole || (form ? String(form.role || '') : '');
+            return role === 'host';
+          }
+
           function retryCorrections() {
             api(API.retryCorrection, {}).then(function (payload) {
               notify('已重新排队 ' + payload.retried + ' 行校正');
@@ -2253,17 +2462,38 @@
           var participantRoster = (function () {
             var seen = {};
             var list = [];
-            agendaEntries.forEach(function (entry) {
-              var name = String((entry && entry.speaker) || '').trim();
-              if (!name) return;
-              var key = normalizePersonName(name);
+            function push(name, org) {
+              name = String(name || '').trim();
+              org = String(org || '').trim();
+              if (!name && !org) return;
+              var key = normalizePersonName(name) || ('org:' + normalizePersonName(org));
               if (seen[key]) return;
               seen[key] = true;
-              list.push({ name: name, org: String((entry && entry.org) || '').trim() });
+              list.push({ name: name || org, org: name ? org : '' });
+            }
+            agendaEntries.forEach(function (entry) {
+              if (!entry) return;
+              var people = Array.isArray(entry.participants) ? entry.participants : [];
+              if (people.length > 0) {
+                // One agenda slot can host several people: expand each one.
+                people.forEach(function (person) { push(person && person.name, person && person.org); });
+                return;
+              }
+              if (entry.speaker) {
+                // Legacy entries may join names with "、"; split them so the
+                // menu never offers a combined name as one person.
+                String(entry.speaker).split(/[、,，;；\/／]+/).forEach(function (part) {
+                  push(part, entry.org);
+                });
+              }
             });
             return list;
           })();
           var agendaCurrent = currentAgendaClient(agendaEntries, agenda && agenda.pinnedIndex);
+          var micOn = isLive && active && typeof active.micEnabled === 'boolean'
+            ? active.micEnabled
+            : form.micEnabled !== false;
+          var micLocked = Boolean(micBusy || busy === 'start' || busy === 'stop' || (active && active.status === 'stopping'));
 
           if (!snapshot) {
             return h('div', { className: 'dshm-panel' },
@@ -2338,6 +2568,18 @@
                 )
               ),
               h('div', { className: 'dshm-bar' },
+                h('button', {
+                  type: 'button', className: 'dshm-btn dshm-micBtn', 'data-kind': 'ghost',
+                  'data-on': micOn ? 'true' : 'false',
+                  'aria-pressed': micOn ? 'true' : 'false',
+                  title: micOn
+                    ? '麦克风开：会采集我的麦克风，我的发言标为「自己」；点击关闭'
+                    : '麦克风关：不采集我的麦克风，不再把我说的话记成自己；点击开启',
+                  disabled: micLocked,
+                  onClick: toggleMic
+                },
+                  h('span', { className: 'dshm-micDot', 'aria-hidden': 'true' }, micOn ? '◉' : '○'),
+                  micBusy ? ' 处理中…' : ' 麦克风：' + (micOn ? '开' : '关')),
                 isLive
                   ? h('button', {
                     type: 'button', className: 'dshm-btn', 'data-kind': 'danger', disabled: busy === 'stop',
@@ -2907,6 +3149,9 @@
             }
             var lastTurn = visibleTurns[visibleTurns.length - 1];
             var refine = active.refineState || {};
+            // Menus stay available after the meeting ends (historical meetings
+            // included); only the finalising "stopping" window is locked.
+            var turnMenuEnabled = active.status !== 'stopping';
             return h('div', null,
               h('div', { className: 'dshm-lines' }, visibleTurns.map(function (turn) {
                 return h(Turn, {
@@ -2916,8 +3161,10 @@
                   roster: participantRoster,
                   menu: speakerMenuTurn === turn.id,
                   onToggleMenu: function (id) { setSpeakerMenuTurn(speakerMenuTurn === id ? '' : id); },
-                  onPickSpeaker: active && !active.readOnly ? pickTurnSpeaker : null,
-                  onPickPerson: active && !active.readOnly ? pickTurnPerson : null
+                  onPickSpeaker: turnMenuEnabled ? pickTurnSpeaker : null,
+                  onPickPerson: turnMenuEnabled ? pickTurnPerson : null,
+                  onDeleteTurn: turnMenuEnabled ? deleteTranscriptTurn : null,
+                  onDeleteSegment: turnMenuEnabled ? deleteTranscriptLine : null
                 });
               })),
               refine.status === 'refining'
@@ -2953,15 +3200,17 @@
               );
             }
             var summary = active.summary || {};
-            var buttonLabel = summary.markdown ? '更新纪要' : '生成纪要';
+            var meetingEnded = Boolean(active.readOnly || active.status === 'ended');
+            var buttonLabel = meetingEnded || summary.markdown ? '重新生成纪要' : '生成纪要';
             return h('div', { className: 'dshm-section' },
               h('div', { className: 'dshm-row', style: { marginBottom: '8px' } },
                 h('div', { className: 'dshm-cardTitle', style: { margin: 0 } }, '会议纪要'),
                 h('span', { className: 'dshm-muted' }, summary.updatedAt ? formatDate(summary.updatedAt) : '尚未生成'),
                 h('span', { className: 'dshm-spacer', style: { flex: 1 } }),
-                active.readOnly ? null : h('button', {
+                h('button', {
                   type: 'button', className: 'dshm-btn', 'data-kind': 'primary', 'data-size': 'small',
                   disabled: summary.status === 'summarizing',
+                  title: meetingEnded ? '已结束/历史会议也可以重新生成纪要' : '按当前转写与会议日程重新生成纪要',
                   onClick: regenerateSummary
                 }, summary.status === 'summarizing' ? '生成中…' : buttonLabel)
               ),
@@ -2980,8 +3229,13 @@
             var script = snapshot && snapshot.script ? snapshot.script : null;
             var savedProfile = snapshot && snapshot.profile ? snapshot.profile : {};
             var userName = (savedProfile.userName || '').trim();
+            var host = isHostRole();
             var ownEntries = userName
-              ? agendaEntries.filter(function (entry) { return entry && nameMatches(entry.speaker, userName); })
+              ? agendaEntries.filter(function (entry) {
+                return agendaEntryPersonNames(entry).some(function (personName) {
+                  return nameMatches(personName, userName);
+                });
+              })
               : [];
             var writing = script && script.status === 'writing';
             var stale = script && script.status === 'done' && script.markdown && agenda
@@ -2989,8 +3243,10 @@
 
             if (agendaEntries.length === 0) {
               return h('div', { className: 'dshm-empty' },
-                h('div', { className: 'dshm-emptyTitle' }, '上传会议日程后生成我的讲词与串词'),
-                h('p', { className: 'dshm-muted' }, '在设置里填写「我的姓名」并上传会议日程；只有当你的名字出现在日程里时，才会为你生成讲词和串词。'),
+                h('div', { className: 'dshm-emptyTitle' }, host ? '上传会议日程后生成主持串词' : '上传会议日程后生成我的讲词与串词'),
+                h('p', { className: 'dshm-muted' }, host
+                  ? '主持人：将包含各环节衔接、发言人总结与讨论嘉宾衔接。先在设置里上传会议日程。'
+                  : '在设置里填写「我的姓名」并上传会议日程；只有当你的名字出现在日程里时，才会为你生成讲词和串词。'),
                 h('button', {
                   type: 'button', className: 'dshm-btn', 'data-kind': 'primary',
                   onClick: function () { switchTab('settings'); }
@@ -2998,11 +3254,16 @@
               );
             }
 
-            var blocked = !userName
-              ? '先在设置里填写「我的姓名」，才会生成属于你的讲词与串词。'
-              : ownEntries.length === 0
-                ? '日程里没有出现“' + userName + '”，所以不生成讲词。请让日程里的讲者写法与你的姓名一致，或修改日程/姓名后重试。'
-                : '';
+            // The host speaks for the whole agenda, so a missing personal name
+            // must not block generation; every other role keeps the old rule.
+            var blocked = '';
+            if (!host) {
+              blocked = !userName
+                ? '先在设置里填写「我的姓名」，才会生成属于你的讲词与串词。'
+                : ownEntries.length === 0
+                  ? '日程里没有出现“' + userName + '”，所以不生成讲词。请让日程里的讲者写法与你的姓名一致，或修改日程/姓名后重试。'
+                  : '';
+            }
 
             return h('div', { className: 'dshm-section' },
               (function () {
@@ -3012,9 +3273,17 @@
                 };
                 var ownWithIndex = agendaEntries
                   .map(function (entry, index) { return { entry: entry, index: index }; })
-                  .filter(function (item) { return item.entry && nameMatches(item.entry.speaker, userName); });
+                  .filter(function (item) {
+                    return item.entry && agendaEntryPersonNames(item.entry).some(function (personName) {
+                      return nameMatches(personName, userName);
+                    });
+                  });
+                var cueChips = host
+                  ? agendaEntries.map(function (entry, index) { return { entry: entry, index: index }; })
+                  : ownWithIndex;
                 return h('div', { className: 'dshm-card' },
-                  h('div', { className: 'dshm-cardTitle' }, '我的串词'),
+                  h('div', { className: 'dshm-cardTitle' }, host ? '主持人串词' : '我的串词'),
+                  host ? h('p', { className: 'dshm-muted' }, '主持人：将包含各环节衔接、发言人总结与讨论嘉宾衔接。') : null,
                   cues.length > 0
                     ? cues.slice().sort(function (a, b) { return (a.at || 0) - (b.at || 0); }).map(function (cue) {
                       return h('div', { key: cue.key, className: 'dshm-cue' },
@@ -3032,22 +3301,26 @@
                             ? h('div', { className: 'dshm-warning' }, cue.error || '生成失败')
                             : h('p', { className: 'dshm-cueText' }, cue.markdown));
                     })
-                    : h('p', { className: 'dshm-muted' }, active
-                      ? '还没有串词。到达你的环节前 2 分钟会自动生成；也可以在下面点一个环节立即生成。'
-                      : '开始听会后，到达你的环节前 2 分钟会自动生成串词。'),
-                  ownWithIndex.length > 0 && active && !active.readOnly
+                    : h('p', { className: 'dshm-muted' }, host
+                      ? (active
+                        ? '还没有串词。可以为下面每个环节立即生成，或点「重新生成」结合实时转写与纪要生成。'
+                        : '开始听会后，可以结合实时转写为每个环节生成串词。')
+                      : (active
+                        ? '还没有串词。到达你的环节前 2 分钟会自动生成；也可以在下面点一个环节立即生成。'
+                        : '开始听会后，到达你的环节前 2 分钟会自动生成串词。')),
+                  cueChips.length > 0 && active && !active.readOnly
                     ? h('div', { className: 'dshm-chips', style: { marginTop: '6px' } },
-                      ownWithIndex.map(function (item) {
+                      cueChips.map(function (item) {
                         return h('button', {
-                          key: 'own' + item.index, type: 'button', className: 'dshm-chip',
+                          key: 'cue' + item.index, type: 'button', className: 'dshm-chip',
                           onClick: function () { requestCue(item.index); }
-                        }, '立即生成：' + (agendaEntryText(item.entry) || '我的环节'));
+                        }, '立即生成：' + (agendaEntryText(item.entry) || (host ? '这个环节' : '我的环节')));
                       }))
                     : null
                 );
               })(),
               h('div', { className: 'dshm-card' },
-                h('div', { className: 'dshm-cardTitle' }, '我的讲词与串词',
+                h('div', { className: 'dshm-cardTitle' }, host ? '主持人讲词与串词' : '我的讲词与串词',
                   h('span', { className: 'dshm-spacer', style: { flex: 1 } }),
                   script && script.markdown && !writing
                     ? h('span', { className: 'dshm-muted' }, script.updatedAt ? formatDate(script.updatedAt) : '')
@@ -3060,7 +3333,8 @@
                 ),
                 blocked.length > 0 ? h('div', { className: 'dshm-warning' }, blocked) : null,
                 writing
-                  ? h('p', { className: 'dshm-muted' }, h('span', { className: 'dshm-spinner' }), ' 正在按日程和我的姓名撰写…')
+                  ? h('p', { className: 'dshm-muted' }, h('span', { className: 'dshm-spinner' }),
+                    host ? ' 正在结合日程、实时转写与纪要撰写主持串词…' : ' 正在按日程和我的姓名撰写…')
                   : null,
                 script && script.error && !writing
                   ? h('div', { className: 'dshm-warning' }, '生成失败：' + script.error)
@@ -3068,14 +3342,19 @@
                 stale
                   ? h('div', { className: 'dshm-warning' }, '日程已更新，上面的讲词可能已经过期，点「重新生成」刷新。')
                   : null,
-                ownEntries.length > 0
+                host
                   ? h('p', { className: 'dshm-muted', style: { marginTop: '6px' } },
-                    '日程中属于我的环节：' + ownEntries.map(function (entry) { return agendaEntryText(entry); }).join('；'))
-                  : null,
+                    '串词将覆盖全部 ' + agendaEntries.length + ' 个环节；实时会议中会结合转写与纪要。')
+                  : ownEntries.length > 0
+                    ? h('p', { className: 'dshm-muted', style: { marginTop: '6px' } },
+                      '日程中属于我的环节：' + ownEntries.map(function (entry) { return agendaEntryText(entry); }).join('；'))
+                    : null,
                 script && script.markdown
                   ? h('div', { style: { marginTop: '8px' } }, h(Markdown, { text: script.markdown }))
                   : h('p', { className: 'dshm-muted', style: { marginTop: '6px' } },
-                    ownEntries.length > 0 ? '点「重新生成」生成属于你的讲词与串词。' : '')
+                    host
+                      ? '点「重新生成」生成覆盖全场的主持串词。'
+                      : ownEntries.length > 0 ? '点「重新生成」生成属于你的讲词与串词。' : '')
               ),
               h('div', { className: 'dshm-card' },
                 h('div', { className: 'dshm-cardTitle' }, '生成提示词'),
